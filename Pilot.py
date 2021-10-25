@@ -168,22 +168,6 @@ def main():
         except KeyboardInterrupt:
             print("exiting")
             
-       # client.apply_batch([carla.command.DestroyActor(x) for x in actor_list])
-             ##Destroy cameras; for some reason if they are stored in an array the script doesnt work
-             ##Destroy cameras; for some reason if they are stored in an array the script doesnt work
-            cam_left.destroy()
-            cam_most_left.destroy()
-            cam_center.destroy()
-            cam_right.destroy()
-            cam_most_right.destroy()
-            cam_rear.destroy()
-            ##Destroy vehicle
-            vehicle.destroy()
-            for sock in socketsByPort.values():
-                sock.close()
-
-            client.reload_world()
-
-
+      
 if __name__ == "__main__":
     main()
