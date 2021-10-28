@@ -341,6 +341,8 @@ class RGBObservers(object):
         cam_bp.set_attribute("image_size_x", str(1920))
         cam_bp.set_attribute("image_size_y", str(1080))
         cam_bp.set_attribute("fov",str(105))
+        # Set the time in seconds between sensor captures
+        cam_bp.set_attribute('sensor_tick', '1.0')
         cam = world.spawn_actor(cam_bp, transform, attach_to = vehicle, attachment_type = carla.AttachmentType.Rigid)
         cam.listen(sensorCallback)
         return cam
@@ -377,9 +379,12 @@ class RGBObservers(object):
         except ConnectionResetError:
             #print("connection reset error")
             return False
+            
         
         return False
-   
+
+
+
 # ==============================================================================
 # -- World ---------------------------------------------------------------------
 # ==============================================================================
@@ -510,9 +515,6 @@ class World(object):
         # self.camera_manager.sensor = None
         # self.camera_manager.index = None
         for car in self.car_list:
-            car.rgb_observers.sensor.destroy()
-            car.rgb_observers.sensor=None
-
             car.camera_manager.sensor.destroy()
             car.camera_manager.sensor = None
             car.camera_manager.index = None
@@ -520,30 +522,20 @@ class World(object):
     def destroy(self):
         if self.radar_sensor is not None:
             self.toggle_radar()
-        # sensors = [
-        #             self.camera_manager.sensor,
-        #             self.collision_sensor.sensor,
-        #             self.lane_invasion_sensor.sensor,
-        #             self.gnss_sensor.sensor,
-        #             self.imu_sensor.sensor] 
-        # for sensor in sensors:
-        #     if sensor is not None:
-        #         sensor.stop()
-        #         sensor.destroy()
-        # if self.player is not None:
-        #     self.player.destroy()
+       
 
         for car in self.car_list:
-            sensors = [
-                    car.camera_manager.sensor,
-                    car.collision_sensor.sensor,
-                    car.lane_invasion_sensor.sensor,
-                    car.gnss_sensor.sensor,
-                    car.imu_sensor.sensor]
+            sensors=[
+                car.camera_manager.sensor,
+                car.collision_sensor.sensor,
+                car.lane_invasion_sensor.sensor,
+                car.gnss_sensor.sensor,
+                car.imu_sensor.sensor]
             for sensor in sensors:
                 if sensor is not None:
                     sensor.stop()
                     sensor.destroy()
+
             if self.player is not None:
                 car.player.destroy()     
 
