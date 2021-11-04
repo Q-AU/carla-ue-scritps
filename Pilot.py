@@ -6,7 +6,6 @@ import time
 from functools import partial
 import socket
 import math
-import keyboard  
 
 SENSOR_SEND_IP = "127.0.0.1"
 RGB_SEND_START_PORT = 2337
@@ -24,7 +23,7 @@ def attach_sensor(world, vehicle, transform, sensorCallback, sensorType):
     cam_bp = world.get_blueprint_library().find(sensorType)
     cam_bp.set_attribute("image_size_x", str(1920))
     cam_bp.set_attribute("image_size_y", str(1080))
-    cam_bp.set_attribute("fov",str(45))
+    cam_bp.set_attribute("fov",str(170))
     cam = world.spawn_actor(cam_bp, transform, attach_to = vehicle, attachment_type = carla.AttachmentType.Rigid)
     cam.listen(sensorCallback)
     return cam
@@ -83,7 +82,8 @@ def main():
         bp  = world.get_blueprint_library().find("vehicle.tesla.model3")
 
         vehicle = world.try_spawn_actor(bp, randLocation)
-
+        """Autopilot"""
+        # vehicle.set_autopilot(True)
         print(vehicle)
         print(bp)
 
@@ -96,44 +96,43 @@ def main():
         ##Rotation controls (X=up-down, Y=left-right,Z)
 
         cam_location=carla.Location(-0.15,-0.4,1.2)
-        #cam_most_left_location = carla.Location(0.3,0,1.3)
-        cam_most_left_rotation = carla.Rotation(0,-90,0)
-        cam_most_left = attach_rgb_camera(world, vehicle, carla.Transform(cam_location,cam_most_left_rotation), 
-            lambda image: partial(rgb_callback, port = RGB_SEND_START_PORT + 0)(image) )
+        # #cam_most_left_location = carla.Location(0.3,0,1.3)
+        # cam_most_left_rotation = carla.Rotation(0,-90,0)
+        # cam_most_left = attach_rgb_camera(world, vehicle, carla.Transform(cam_location,cam_most_left_rotation), 
+        #     lambda image: partial(rgb_callback, port = RGB_SEND_START_PORT + 0)(image) )
 
-        #cam_left_location = carla.Location(0.3,0,1.3)
-        cam_left_rotation = carla.Rotation(0,-45,0)
-        cam_left = attach_rgb_camera(world, vehicle, carla.Transform(cam_location,cam_left_rotation), 
-            lambda image: partial(rgb_callback, port = RGB_SEND_START_PORT + 1)(image) )
+        # #cam_left_location = carla.Location(0.3,0,1.3)
+        # cam_left_rotation = carla.Rotation(0,-45,0)
+        # cam_left = attach_rgb_camera(world, vehicle, carla.Transform(cam_location,cam_left_rotation), 
+        #     lambda image: partial(rgb_callback, port = RGB_SEND_START_PORT + 1)(image) )
 
 
-        #cam_center_location = carla.Location(0.3,0,1.3)
+        cam_center_location = carla.Location(0.3,0,1.3)
         cam_center_rotation = carla.Rotation(0,0,0)
         cam_center = attach_rgb_camera(world, vehicle, carla.Transform(cam_location,cam_center_rotation), 
-            lambda image: partial(rgb_callback, port = (RGB_SEND_START_PORT + 2))(image))
+            lambda image: partial(rgb_callback, port = (RGB_SEND_START_PORT))(image))
         
-        #cam_right_location = carla.Location(0.3,0,1.3)
-        cam_right_rotation = carla.Rotation(0,45,0)
-        cam_right = attach_rgb_camera(world, vehicle, carla.Transform(cam_location,cam_right_rotation), 
-            lambda image: partial(rgb_callback, port = (RGB_SEND_START_PORT + 3))(image))
+        # #cam_right_location = carla.Location(0.3,0,1.3)
+        # cam_right_rotation = carla.Rotation(0,45,0)
+        # cam_right = attach_rgb_camera(world, vehicle, carla.Transform(cam_location,cam_right_rotation), 
+        #     lambda image: partial(rgb_callback, port = (RGB_SEND_START_PORT + 3))(image))
         
         
-        #cam_most_right_location = carla.Location(0.3,0,1.3)
-        cam_most_right_rotation = carla.Rotation(0,90,0)
-        cam_most_right = attach_rgb_camera(world, vehicle, carla.Transform(cam_location,cam_most_right_rotation), 
-            lambda image: partial(rgb_callback, port = (RGB_SEND_START_PORT + 4))(image))
+        # #cam_most_right_location = carla.Location(0.3,0,1.3)
+        # cam_most_right_rotation = carla.Rotation(0,90,0)
+        # cam_most_right = attach_rgb_camera(world, vehicle, carla.Transform(cam_location,cam_most_right_rotation), 
+        #     lambda image: partial(rgb_callback, port = (RGB_SEND_START_PORT + 4))(image))
         
-        #cam_rear_location = carla.Location(0.3,0,1.3)
-        cam_rear_rotation = carla.Rotation(0,180,0)
-        cam_rear = attach_rgb_camera(world, vehicle, carla.Transform(cam_location,cam_rear_rotation), 
-            lambda image: partial(rgb_callback, port = (RGB_SEND_START_PORT + 5))(image))
-    
+        # #cam_rear_location = carla.Location(0.3,0,1.3)
+        # cam_rear_rotation = carla.Rotation(0,180,0)
+        # cam_rear = attach_rgb_camera(world, vehicle, carla.Transform(cam_location,cam_rear_rotation), 
+        #     lambda image: partial(rgb_callback, port = (RGB_SEND_START_PORT + 5))(image))
+        
 
         observer = world.get_spectator()
         observer.set_transform(cam_center.get_transform())
 
-        """Autopilot"""        
-        ##vehicle.set_autopilot(True)
+       
         """Manual control, needs to be defined!!"""        
 
         # while True:  # making a loop
@@ -151,13 +150,14 @@ def main():
         try:
             k = input("input: ") 
             ##Destroy cameras; for some reason if they are stored in an array the script doesnt work
-            cam_left.destroy()
-            cam_most_left.destroy()
+            # cam_left.destroy()
+            # cam_most_left.destroy()
+            cam_center.stop()
             cam_center.destroy()
-            cam_right.destroy()
-            cam_most_right.destroy()
-            cam_rear.destroy()
-            ##Destroy vehicle
+            # cam_right.destroy()
+            # cam_most_right.destroy()
+            # cam_rear.destroy()
+            # ##Destroy vehicle
             vehicle.destroy()
 
             for sock in socketsByPort.values():
@@ -167,7 +167,18 @@ def main():
 
         except KeyboardInterrupt:
             print("exiting")
-            
+            cam_center.stop()
+            cam_center.destroy()
+            # cam_right.destroy()
+            # cam_most_right.destroy()
+            # cam_rear.destroy()
+            # ##Destroy vehicle
+            vehicle.destroy()
+
+            for sock in socketsByPort:
+                sock.close()
+
+            client.reload_world()
       
 if __name__ == "__main__":
     main()
