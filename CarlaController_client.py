@@ -63,8 +63,9 @@ from __future__ import print_function
 import glob
 import os
 import sys
-
-
+import threading
+import time
+import json
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
@@ -140,6 +141,11 @@ try:
     from pygame.locals import K_z
     from pygame.locals import K_MINUS
     from pygame.locals import K_EQUALS
+    #Keys to switch among cars
+    from pygame.locals import K_F2
+    
+
+
 except ImportError:
     raise RuntimeError('cannot import pygame, make sure pygame package is installed')
 
@@ -152,56 +158,6 @@ except ImportError:
 # ==============================================================================
 # -- Global functions ----------------------------------------------------------
 # ==============================================================================
-# SENSOR_SEND_IP = "127.0.0.1"
-# RGB_SEND_START_PORT = 2337
-# socketsByPort = {}
-# socketType = socket.AF_INET
-# protocolType = socket.SOCK_STREAM
-
-# def attach_sensor(world, vehicle, transform, sensorCallback, sensorType):
-#     cam_bp = world.get_blueprint_library().find(sensorType)
-#     cam_bp.set_attribute("image_size_x", str(1920))
-#     cam_bp.set_attribute("image_size_y", str(1080))
-#     cam_bp.set_attribute("fov",str(45))
-#     cam = world.spawn_actor(cam_bp, transform, attach_to = vehicle, attachment_type = carla.AttachmentType.Rigid)
-#     cam.listen(sensorCallback)
-#     return cam
-
-
-# def rgb_callback(image, port):
-#     if port not in socketsByPort:
-#         try:
-#             sock = socket.socket(socketType, protocolType)
-#             socketsByPort[port] = sock
-#             sock.connect((SENSOR_SEND_IP, port))
-            
-#         except ConnectionRefusedError:
-#             #print("connection refused error")
-#             del socketsByPort[port]
-#             return
-        
-#     sock = socketsByPort[port]
-
-#     try:
-#         still_connected = send_image(image, sock)
-#     # image.save_to_disk("images/", carla.ColorConverter.CityScapesPalette)
-#         if not still_connected:
-#             del socketsByPort[port]
-#             sock.close()
-#     except ConnectionAbortedError:
-#         del socketsByPort[port]
-#         sock.close()
-    
-# def send_image(image, sock):
-#     try:
-#         #print(len(image.raw_data))
-#         sock.sendall(image.raw_data)
-#         return True
-#     except ConnectionResetError:
-#         #print("connection reset error")
-#         return False
-    
-#     return False
 
 def find_weather_presets():
     rgx = re.compile('.+?(?:(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|$)')
@@ -237,18 +193,73 @@ def get_actor_blueprints(world, filter, generation):
     except:
         print("   Warning! Actor Generation is not valid. No actor will be spawned.")
         return []
-
-
 # ==============================================================================
-# -- World ---------------------------------------------------------------------
+# -- OtherSensorDataSender------------------------------------------------------
 # ==============================================================================
 
+class OtherSensorDataSender(object):
+    def __init__(self, parent_actor):
+        self.SENSOR_SEND_IP = "127.0.0.1"
+        self.OTHER_SENSOR_DATA_SEND_START_PORT = 4337
+        self.socketsByPort = {}
+        self.socketType = socket.AF_INET
+        self.protocolType = socket.SOCK_STREAM
 
-class World(object):
-    def __init__(self, carla_world, hud, args):
-        self.world = carla_world
-        self.sync = args.sync
-        self.actor_role_name = args.rolename
+        self._parent = parent_actor
+        self._world = self._parent.get_world()
+
+    def set_other_sensor_data(self):
+        v = self._parent.get_velocity()
+        speed = 3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2)
+        other_sensor_data = {
+            'current_speed': speed,
+            'battery_status': 90
+        }
+
+        other_sensor_data_to_send = json.dumps(other_sensor_data).encode("utf-8")
+        self.other_sensor_data_callback(other_sensor_data_to_send, self.OTHER_SENSOR_DATA_SEND_START_PORT)
+
+    def other_sensor_data_callback(self, other_sensor_data, port):
+        if port not in self.socketsByPort:
+            try:
+                sock = socket.socket(self.socketType, self.protocolType)
+                self.socketsByPort[port] = sock
+                sock.connect((self.SENSOR_SEND_IP, port))
+               
+            except ConnectionRefusedError:
+                #print("connection refused error")
+                del self.socketsByPort[port]
+                return
+           
+        sock = self.socketsByPort[port]
+
+        try:
+            still_connected = self.socket_send_other_sensor_data(other_sensor_data, sock)
+        # image.save_to_disk("images/", carla.ColorConverter.CityScapesPalette)
+            if not still_connected:
+                del self.socketsByPort[port]
+                sock.close()
+        except ConnectionAbortedError:
+            del self.socketsByPort[port]
+            sock.close()
+           
+    def socket_send_other_sensor_data(self, other_sensor_data, sock):
+        try:
+            sock.sendall(other_sensor_data)
+            return True
+        except ConnectionResetError:
+            #print("connection reset error")
+            return False
+
+        return False
+
+# ==============================================================================
+# -- Car ---------------------------------------------------------------------
+# ==============================================================================
+
+class Car(object):
+    def __init__(self,world,carType,carGen,carName,hud,gamma, port):
+        self.world=world
         try:
             self.map = self.world.get_map()
         except RuntimeError as error:
@@ -256,21 +267,246 @@ class World(object):
             print('  The server could not send the OpenDRIVE (.xodr) file:')
             print('  Make sure it exists, has the same name of your town, and is correct.')
             sys.exit(1)
-        self.rgb_observers=None    
-        self.hud = hud
-        self.player = None
-        self.collision_sensor = None
+        self.Thread=None    
+        self.hud = hud 
+        self._port=port 
+        self._gamma=gamma
+        self.sync=None  
+        self.player=None
+        self.collision_sensor =None
         self.lane_invasion_sensor = None
         self.gnss_sensor = None
         self.imu_sensor = None
-        self.rgb_cameras=None
-        self.radar_sensor = None
         self.camera_manager = None
+        self._actor_filter=carType
+        self._actor_generation=carGen
+        self.actor_role_name =carName
+        self.player_max_speed = 1.589
+        self.player_max_speed_fast = 3.713
+        self.rgb_observers=None    
+        self.restart()
+        
+    def restart(self):
+        # Get a random blueprint.
+        blueprint = random.choice(get_actor_blueprints(self.world, self._actor_filter, self._actor_generation))
+        blueprint.set_attribute('role_name', self.actor_role_name)
+        if blueprint.has_attribute('color'):
+            color = random.choice(blueprint.get_attribute('color').recommended_values)
+            blueprint.set_attribute('color', color)
+        if blueprint.has_attribute('driver_id'):
+            driver_id = random.choice(blueprint.get_attribute('driver_id').recommended_values)
+            blueprint.set_attribute('driver_id', driver_id)
+        if blueprint.has_attribute('is_invincible'):
+            blueprint.set_attribute('is_invincible', 'true')
+        # set the max speed
+        if blueprint.has_attribute('speed'):
+            self.player_max_speed = float(blueprint.get_attribute('speed').recommended_values[1])
+            self.player_max_speed_fast = float(blueprint.get_attribute('speed').recommended_values[2])
+         # Spawn the player.
+        if self.player is not None:
+            spawn_point = self.player.get_transform()
+            spawn_point.location.z += 2.0
+            spawn_point.rotation.roll = 0.0
+            spawn_point.rotation.pitch = 0.0
+            self.destroy()
+            self.player = self.world.try_spawn_actor(blueprint, spawn_point)
+            
+            self.modify_vehicle_physics(self.player)
+
+        while self.player is None:
+            if not self.map.get_spawn_points():
+                print('There are no spawn points available in your map/town.')
+                print('Please add some Vehicle Spawn Point to your UE4 scene.')
+                sys.exit(1)
+            spawn_points = self.map.get_spawn_points()
+            spawn_point = random.choice(spawn_points) if spawn_points else carla.Transform()
+            self.player = self.world.try_spawn_actor(blueprint, spawn_point)
+        
+            self.modify_vehicle_physics(self.player)
+         ##Set up the rbg cameras that are streamed to UE4
+        self.rgb_observers=RGBObservers(self.player, self._port)
+        self.rgb_observers.set_sensors()
+        
+        # self.rgb_observers.set_sensors()
+
+        # Set up the sensors.
+        self.collision_sensor = CollisionSensor(self.player, self.hud)
+        self.lane_invasion_sensor = LaneInvasionSensor(self.player, self.hud)
+        self.gnss_sensor = GnssSensor(self.player)
+        self.imu_sensor = IMUSensor(self.player)
+        self.camera_manager = CameraManager(self.player, self.hud, self._gamma)
+        
+        # Autopilot
+        self.player.set_autopilot(enabled=True)
+
+    def modify_vehicle_physics(self, actor):
+        #If actor is not a vehicle, we cannot use the physics control
+        try:
+            physics_control = actor.get_physics_control()
+            physics_control.use_sweep_wheel_collision = True
+            actor.apply_physics_control(physics_control)
+        except Exception:
+            pass
+
+    def destroy_sensors(self):
+        self.camera_manager.sensor.destroy()
+        self.camera_manager.sensor = None
+        self.camera_manager.index = None
+
+    def destroy(self):
+        if self.radar_sensor is not None:
+            self.toggle_radar()
+        sensors = [
+            self.camera_manager.sensor,
+            self.collision_sensor.sensor,
+            self.lane_invasion_sensor.sensor,
+            self.gnss_sensor.sensor,
+            self.imu_sensor.sensor]
+        for sensor in sensors:
+            if sensor is not None:
+                sensor.stop()
+                sensor.destroy()
+        if self.player is not None:
+            self.player.destroy()
+
+
+
+# ==============================================================================
+# -- RGB Obervers     ----------------------------------------------------------
+# ==============================================================================
+
+"""RGB Cameras set up must be nodified here"""
+class RGBObservers(object):
+    def __init__(self, parent_actor, port):
+        self._port=port
+        self.SENSOR_SEND_IP = "127.0.0.1"
+        #self.SENSOR_SEND_IP = "192.168.0.100"
+        # self.SENSOR_SEND_IP = "169.254.39.15"
+        #self.SENSOR_SEND_IP = "169.254.69.126"
+        #self.SENSOR_SEND_IP2 = "169.254.88.129"
+        self.RGB_SEND_START_PORT = 2337
+        self.Thread=None
+        self.socketsByPort = {}
+        # self.socketsByPort2 = {}
+
+        self.socketType = socket.AF_INET
+        self.protocolType = socket.SOCK_STREAM
+        self.sensor=None
+        self._parent = parent_actor
+        self._world = self._parent.get_world()
+        self.attach_rgb_camera=partial(self.attach_sensor, sensorType='sensor.camera.rgb')
+
+  
+    def attach_sensor(self,world, vehicle, transform, sensorCallback, sensorType):
+        cam_bp = world.get_blueprint_library().find(sensorType)
+        cam_bp.set_attribute("image_size_x", str(1920))
+        cam_bp.set_attribute("image_size_y", str(1080))
+        cam_bp.set_attribute("fov",str(110))
+        # Set the time in seconds between sensor captures
+        cam_bp.set_attribute('sensor_tick', '2')
+        cam = world.spawn_actor(cam_bp, transform, attach_to = vehicle, attachment_type = carla.AttachmentType.Rigid)
+        cam.listen(sensorCallback)
+        return cam
+        
+    def set_sensors(self):
+        self.sensor=[]
+        cam_location=carla.Location(-0.15,-0.4,1.2)
+        cam1= self.attach_rgb_camera(self._world,self._parent, 
+        carla.Transform(cam_location,carla.Rotation(0,0,0)),
+        lambda image: partial(self.rgb_callback,port=self._port)(image))
+        self.sensor.append(cam1)   
+        
+    def rgb_callback(self,image, port):
+        # Set up the other data sensors for speed, battery etc
+        self.other_sensor_data_sender = OtherSensorDataSender(self._parent)
+        self.other_sensor_data_sender.set_other_sensor_data()
+        if port not in self.socketsByPort:
+            try:
+                sock = socket.socket(self.socketType, self.protocolType)
+                # sock2 = socket.socket(self.socketType, self.protocolType)
+
+                self.socketsByPort[port] = sock
+                # self.socketsByPort2[port] = sock2
+
+                sock.connect((self.SENSOR_SEND_IP, port))
+                # sock2.connect((self.SENSOR_SEND_IP2, port))
+
+            except ConnectionRefusedError:
+                #print("connection refused error")
+                del self.socketsByPort[port]
+                # del self.socketsByPort2[port]
+
+                return
+            
+        sock = self.socketsByPort[port]
+        # sock2 = self.socketsByPort2[port]
+
+        try:
+            still_connected = self.send_image(image, sock)
+            # still_connected2 = self.send_image(image, sock2)
+
+        # image.save_to_disk("images/", carla.ColorConverter.CityScapesPalette)
+            if not still_connected :
+                del self.socketsByPort[port]
+                # del self.socketsByPort2[port]
+
+                sock.close()
+                # sock2.close()
+        except ConnectionAbortedError:
+            del self.socketsByPort[port]
+            # del self.socketsByPort2[port]
+            sock.close()
+            # sock2.close()
+        
+        
+    def send_image(self,image, sock):
+        try:
+            #print(len(image.raw_data))
+            sock.sendall(image.raw_data)
+            return True
+        except ConnectionResetError:
+            #print("connection reset error")
+            return False
+
+        
+        return False
+
+
+
+# ==============================================================================
+# -- World ---------------------------------------------------------------------
+# ==============================================================================
+ 
+
+class World(object):
+    def __init__(self, carla_world, hud, args):
+        self.world = carla_world
+        self.sync = args.sync
+        self.actor_role_name = args.rolename  #Needs to be an array
+        try:
+            self.map = self.world.get_map()
+        except RuntimeError as error:
+            print('RuntimeError: {}'.format(error))
+            print('  The server could not send the OpenDRIVE (.xodr) file:')
+            print('  Make sure it exists, has the same name of your town, and is correct.')
+            sys.exit(1)
+        
+        self.car_index=None  
+        self.car_list=None  
+        self.rgb_observers=None   #Needs be handle within Car class
+        self.hud = hud
+        self.player = None   #Needs to be an array
+        self.collision_sensor = None  #Needs be handle within Car class
+        self.lane_invasion_sensor = None #Needs be handle within Car class
+        self.gnss_sensor = None #Needs be handle within Car class
+        self.imu_sensor = None #Needs be handle within Car class
+        self.radar_sensor = None #Needs be handle within Car class
+        self.camera_manager = None #Needs be handle within Car class
         self._weather_presets = find_weather_presets()
         self._weather_index = 0
-        self._actor_filter = args.filter
-        self._actor_generation = args.generation
-        self._gamma = args.gamma
+        self._actor_filter = args.filter #Needs be handle within Car class
+        self._actor_generation = args.generation #Needs be handle within Car class
+        self._gamma = args.gamma 
         self.restart()
         self.world.on_tick(hud.on_world_tick)
         self.recording_enabled = False
@@ -296,68 +532,22 @@ class World(object):
      
 
     def restart(self):
-        
-        self.player_max_speed = 1.589
-        self.player_max_speed_fast = 3.713
+        self.car_index=0
+        self.car_list=[]
+        #def __init__(self,world,carType,carGen,carName):
         # Keep same camera config if the camera manager exists.
-        cam_index = self.camera_manager.index if self.camera_manager is not None else 0
-        cam_pos_index = self.camera_manager.transform_index if self.camera_manager is not None else 0
-        # Get a random blueprint.
-        blueprint = random.choice(get_actor_blueprints(self.world, self._actor_filter, self._actor_generation))
-        blueprint.set_attribute('role_name', self.actor_role_name)
-        if blueprint.has_attribute('color'):
-            color = random.choice(blueprint.get_attribute('color').recommended_values)
-            blueprint.set_attribute('color', color)
-        if blueprint.has_attribute('driver_id'):
-            driver_id = random.choice(blueprint.get_attribute('driver_id').recommended_values)
-            blueprint.set_attribute('driver_id', driver_id)
-        if blueprint.has_attribute('is_invincible'):
-            blueprint.set_attribute('is_invincible', 'true')
-        # set the max speed
-        if blueprint.has_attribute('speed'):
-            self.player_max_speed = float(blueprint.get_attribute('speed').recommended_values[1])
-            self.player_max_speed_fast = float(blueprint.get_attribute('speed').recommended_values[2])
-
-        # Spawn the player.
-        if self.player is not None:
-            spawn_point = self.player.get_transform()
-            spawn_point.location.z += 2.0
-            spawn_point.rotation.roll = 0.0
-            spawn_point.rotation.pitch = 0.0
-            self.destroy()
-            self.player = self.world.try_spawn_actor(blueprint, spawn_point)
-            
-            self.modify_vehicle_physics(self.player)
-
-
-        while self.player is None:
-            if not self.map.get_spawn_points():
-                print('There are no spawn points available in your map/town.')
-                print('Please add some Vehicle Spawn Point to your UE4 scene.')
-                sys.exit(1)
-            spawn_points = self.map.get_spawn_points()
-            spawn_point = random.choice(spawn_points) if spawn_points else carla.Transform()
-            self.player = self.world.try_spawn_actor(blueprint, spawn_point)
         
-            self.modify_vehicle_physics(self.player)
-        ##Set up the rbg cameras that are streamed to UE4
-        self.rgb_observers=RGBObservers(self.player)
-        self.rgb_observers.set_sensors()
-    
-        # Set up the sensors.
-        self.collision_sensor = CollisionSensor(self.player, self.hud)
-        self.lane_invasion_sensor = LaneInvasionSensor(self.player, self.hud)
-        self.gnss_sensor = GnssSensor(self.player)
-        self.imu_sensor = IMUSensor(self.player)
-        self.camera_manager = CameraManager(self.player, self.hud, self._gamma)
-        self.camera_manager.transform_index = cam_pos_index
-        self.camera_manager.set_sensor(cam_index, notify=False)
-        actor_type = get_actor_display_name(self.player)
-        self.hud.notification(actor_type)
-        
+        car1=Car(self.world,self._actor_filter,self._actor_generation,"hero1",self.hud,self._gamma,3333)
+        self.car_list.append(car1)
+        car2=Car(self.world,self._actor_filter,self._actor_generation,"hero2",self.hud,self._gamma,2338)
+        self.car_list.append(car2)
+        # car3= Car(self.world,self._actor_filter,self._actor_generation,"hero3",self.hud,self._gamma,2339)
+        # self.car_list.append(car3)
 
         
-        print(self.player)
+        self.set_player(self.car_index)
+        
+
         if self.sync:
             self.world.tick()
         else:
@@ -410,29 +600,60 @@ class World(object):
         self.hud.render(display)
 
     def destroy_sensors(self):
-        self.camera_manager.sensor.destroy()
-        self.camera_manager.sensor = None
-        self.camera_manager.index = None
+        # self.camera_manager.sensor.destroy()
+        # self.camera_manager.sensor = None
+        # self.camera_manager.index = None
+        
+        for car in self.car_list:
+            car.rbg_obeservers.sensor=None
+            car.camera_manager.sensor.destroy()
+            car.camera_manager.sensor = None
+            car.camera_manager.index = None
 
     def destroy(self):
         if self.radar_sensor is not None:
             self.toggle_radar()
-        sensors = [
-            self.camera_manager.sensor,
-            self.collision_sensor.sensor,
-            self.lane_invasion_sensor.sensor,
-            self.gnss_sensor.sensor,
-            self.imu_sensor.sensor]
-        for sensor in sensors:
-            if sensor is not None:
-                sensor.stop()
-                sensor.destroy()
-        if self.player is not None:
-            self.player.destroy()
-
-  
     
 
+        for car in self.car_list:
+            
+            sensors=[
+                car.camera_manager.sensor,
+                car.collision_sensor.sensor,
+                car.lane_invasion_sensor.sensor,
+                car.gnss_sensor.sensor,
+                car.imu_sensor.sensor]
+            for sensor in sensors:
+                if sensor is not None:
+                    sensor.stop()
+                    sensor.destroy()
+
+            if self.player is not None:
+                car.player.destroy()     
+
+
+        
+    
+    def switch_vehicle(self):
+        self.car_index=(self.car_index+1) % len(self.car_list)
+        self.set_player(self.car_index)
+        self.hud.notification('Car index: %s' % self.car_index)
+
+    def set_player(self,index):
+        cam_index = self.camera_manager.index if self.camera_manager is not None else 0
+        cam_pos_index = self.camera_manager.transform_index if self.camera_manager is not None else 0
+        self.collision_sensor = self.car_list[index].collision_sensor
+        self.lane_invasion_sensor = self.car_list[index].lane_invasion_sensor
+        self.gnss_sensor =self.car_list[index].gnss_sensor
+        self.imu_sensor = self.car_list[index].imu_sensor
+        self.camera_manager = self.car_list[index].camera_manager
+        self.camera_manager.transform_index = cam_pos_index
+        self.camera_manager.set_sensor(cam_index, notify=False)
+        self.player=self.car_list[index].player
+        actor_type = get_actor_display_name(self.player)
+
+        self.hud.notification(actor_type)
+             
 # ==============================================================================
 # -- KeyboardControl -----------------------------------------------------------
 # ==============================================================================
@@ -472,6 +693,8 @@ class KeyboardControl(object):
                         world.player.set_autopilot(True)
                     else:
                         world.restart()
+                elif event.key == K_F2:
+                    world.switch_vehicle()        
                 elif event.key == K_F1:
                     world.hud.toggle_info()
                 elif event.key == K_v and pygame.key.get_mods() & KMOD_SHIFT:
@@ -654,6 +877,8 @@ class KeyboardControl(object):
         self._steer_cache = min(0.7, max(-0.7, self._steer_cache))
         self._control.steer = round(self._steer_cache, 1)
         self._control.hand_brake = keys[K_SPACE]
+
+        
 
     def _parse_walker_keys(self, keys, milliseconds, world):
         self._control.speed = 0.0
@@ -913,100 +1138,6 @@ class CollisionSensor(object):
         if len(self.history) > 4000:
             self.history.pop(0)
 
-# ==============================================================================
-# -- RGB Obervers     ----------------------------------------------------------
-# ==============================================================================
-
-"""RGB Cameras set up must be nodified here"""
-class RGBObservers(object):
-    def __init__(self, parent_actor):
-
-        self.SENSOR_SEND_IP = "127.0.0.1"
-        self.RGB_SEND_START_PORT = 2337
-        self.socketsByPort = {}
-        self.socketType = socket.AF_INET
-        self.protocolType = socket.SOCK_STREAM
-
-        self.sensor=None
-        self._parent = parent_actor
-        self._world = self._parent.get_world()
-        self.attach_rgb_camera=partial(attach_sensor, sensorType='sensor.camera.rgb')
-
-    def set_sensors(self):
-        self.sensor=[]
-        cam_location=carla.Location(-0.15,-0.4,1.2)
-        cam1= self.attach_rgb_camera(self._world,self._parent, 
-         carla.Transform(cam_location,carla.Rotation(0,-90,0)),
-         lambda image: partial(rgb_callback,port=RGB_SEND_START_PORT)(image))
-        cam2= self.attach_rgb_camera(self._world,self._parent,
-         carla.Transform(cam_location,carla.Rotation(0,-45,0)),
-         lambda image: partial(rgb_callback,port=RGB_SEND_START_PORT+1)(image))
-        cam3= self.attach_rgb_camera(self._world,self._parent,
-         carla.Transform(cam_location, carla.Rotation(0,0,0)),
-         lambda image: partial(rgb_callback,port=RGB_SEND_START_PORT+2)(image))
-        cam4= self.attach_rgb_camera(self._world,self._parent,
-         carla.Transform(cam_location, carla.Rotation(0,45,0)),
-         lambda image: partial(rgb_callback,port=RGB_SEND_START_PORT+3)(image))
-        cam5= self.attach_rgb_camera(self._world,self._parent, 
-         carla.Transform(cam_location,carla.Rotation(0,90,0)),
-         lambda image: partial(rgb_callback,port=RGB_SEND_START_PORT+4)(image))
-        cam6= self.attach_rgb_camera(self._world,self._parent,
-         carla.Transform(cam_location,carla.Rotation(0,180,0)),
-         lambda image: partial(rgb_callback,port=RGB_SEND_START_PORT+5)(image))
-
-        self.sensor.append(cam1)
-        self.sensor.append(cam2)
-        self.sensor.append(cam3)
-        self.sensor.append(cam4)
-        self.sensor.append(cam5)
-        self.sensor.append(cam6)
-
-
-
-    def attach_sensor(self,world, vehicle, transform, sensorCallback, sensorType):
-        cam_bp = world.get_blueprint_library().find(sensorType)
-        cam_bp.set_attribute("image_size_x", str(1920))
-        cam_bp.set_attribute("image_size_y", str(1080))
-        cam_bp.set_attribute("fov",str(45))
-        cam = world.spawn_actor(cam_bp, transform, attach_to = vehicle, attachment_type = carla.AttachmentType.Rigid)
-        cam.listen(sensorCallback)
-        return cam
-        
-    def rgb_callback(self,image, port):
-        if port not in self.socketsByPort:
-            try:
-                sock = socket.socket(self.socketType, self.protocolType)
-                self.socketsByPort[port] = sock
-                sock.connect((self.SENSOR_SEND_IP, port))
-                
-            except ConnectionRefusedError:
-                #print("connection refused error")
-                del self.socketsByPort[port]
-                return
-            
-        sock = self.socketsByPort[port]
-
-        try:
-            still_connected = self.send_image(image, sock)
-        # image.save_to_disk("images/", carla.ColorConverter.CityScapesPalette)
-            if not still_connected:
-                del self.socketsByPort[port]
-                sock.close()
-        except ConnectionAbortedError:
-            del self.socketsByPort[port]
-            sock.close()
-        
-    def send_image(self,image, sock):
-        try:
-            #print(len(image.raw_data))
-            sock.sendall(image.raw_data)
-            return True
-        except ConnectionResetError:
-            #print("connection reset error")
-            return False
-        
-        return False
-
 
 # ==============================================================================
 # -- LaneInvasionSensor --------------------------------------------------------
@@ -1235,6 +1366,7 @@ class CameraManager(object):
             if item[0].startswith('sensor.camera'):
                 bp.set_attribute('image_size_x', str(hud.dim[0]))
                 bp.set_attribute('image_size_y', str(hud.dim[1]))
+                bp.set_attribute('fov', str(120))
                 if bp.has_attribute('gamma'):
                     bp.set_attribute('gamma', str(gamma_correction))
                 for attr_name, attr_value in item[3].items():
@@ -1413,6 +1545,7 @@ def game_loop(args):
 def main():
     argparser = argparse.ArgumentParser(
         description='CARLA Manual Control Client')
+   
     argparser.add_argument(
         '-v', '--verbose',
         action='store_true',
@@ -1436,7 +1569,7 @@ def main():
     argparser.add_argument(
         '--res',
         metavar='WIDTHxHEIGHT',
-        default='1280x720',
+        default='1920x1080',
         help='window resolution (default: 1280x720)')
     argparser.add_argument(
         '--filter',
