@@ -52,8 +52,8 @@ Use ARROWS or WASD keys for control.
     ESC          : quit
 """
 
-from __future__ import print_function
-
+from __future__ import print_function,division
+import cv2
 
 # ==============================================================================
 # -- find carla module ---------------------------------------------------------
@@ -71,6 +71,7 @@ try:
         sys.version_info.major,
         sys.version_info.minor,
         'win-amd64' if os.name == 'nt' else 'linux-x86_64'))[0])
+    sys.path.append("c:/python310/lib/site-packages/")    
 except IndexError:
     pass
 
@@ -100,6 +101,8 @@ from functools import partial
 import socket
 import math
 import base64
+
+import struct
 
 ########
 
@@ -195,6 +198,39 @@ def get_actor_blueprints(world, filter, generation):
     except:
         print("   Warning! Actor Generation is not valid. No actor will be spawned.")
         return []
+
+# ==============================================================================
+# --Fragment Video ---------------------------------------------------------
+# ==============================================================================
+class FrameSegment(object):
+    def __init__(self, sock):
+        self.s=sock
+        self.port=6000
+        self.addr="224.1.1.1"
+        self.MAX_DGRAM=2**16
+        self.MAX_IMAGE_DGRAM=self.MAX_DGRAM-64
+       
+    def udp_frame(self, img):
+        """  Compress image and Break down
+        into data segments"""
+  
+        compress_img = cv2.imencode(".jpg", img)[1]
+        dat = compress_img.tostring()
+        size = len(dat)
+        num_of_segments = math.ceil(size/(self.MAX_IMAGE_DGRAM))
+        array_pos_start = 0
+    
+        while num_of_segments:
+            array_pos_end = min(size, array_pos_start + self.MAX_IMAGE_DGRAM)
+            self.s.sendto(
+                    struct.pack("B", num_of_segments) +
+                    dat[array_pos_start:array_pos_end], 
+                    (self.addr, self.port)
+                    )
+            array_pos_start = array_pos_end
+            num_of_segments -= 1
+
+
 # ==============================================================================
 # -- OtherSensorDataSender------------------------------------------------------
 # ==============================================================================
@@ -426,7 +462,7 @@ class RGBObservers(object):
                 socket.SOCK_DGRAM,
                 socket.IPPROTO_UDP)
             sock.setsockopt(socket.IPPROTO_IP,
-                socket.IP_MULTICAST_TTL,ttl) 
+                socket.IP_MULTICAST_TTL,ttl)
             self.send_image(image,sock)    
         except ConnectionAbortedError:
             sock.close()
@@ -477,22 +513,27 @@ class RGBObservers(object):
     def send_image(self,image, sock ):
         group="224.1.1.1"
         port=6000
-        start = 0
-        end = 1024
-        img_bytes = image.raw_data.tobytes()
-
+        FS=FrameSegment(sock)
         try:
-            print(len(image.raw_data))
-            while end < len(img_bytes):
-                sock.sendto(img_bytes[start:end], (group,port))
-                start = end + 1
-                end += 1024
+            array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
+            array = np.reshape(array, (image.height, image.width, 4))
+            array = array[:, :, :3]
+            array = array[:, :, ::-1]
+            FS.udp_frame(array)    
+        # start = 0
+        # end = 1024
+        # img_bytes = image.raw_data.tobytes()
+        # try:
+        #     while end < len(img_bytes):
+        #         sock.sendto(img_bytes[start:end],(group,port))
+        #         start = end + 1
+        #         end += 1024
+        #     sock.sendto("END".encode(),(group,port))    
             return True
         except ConnectionResetError:
             #print("connection reset error")
+            sock.close()
             return False
-
-        
         return False
 
 

@@ -1477,32 +1477,7 @@ class CameraManager(object):
 # ==============================================================================
 # -- Server ---------------------------------------------------------------
 # ==============================================================================
-class Server(object):
-    def __init__(self,ip,port):
-        self._ip=ip
-        self._port=port
-        self.connection=None
-        self.addr=None
-        self.Connect()
-        self.Listen(self.connection, self.addr,True)
-        
 
-    def Connect(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind((self._ip, self._port))
-            s.listen()
-            self.connection, self.addr = s.accept()
-           
-    def Listen(self,conn,addr,isConnected):
-        with conn:
-                print('Connected by', addr)
-                while isConnected:
-                    data = conn.recv(1024)
-                    if not data:
-                        break
-                    conn.sendall(data)
-
-    
 
 # ==============================================================================
 # -- game_loop() ---------------------------------------------------------------
@@ -1515,7 +1490,6 @@ def game_loop(args):
     pygame.font.init()
     world = None
     original_settings = None
-    conn=None
 
     try:
         client = carla.Client(args.host, args.port)
@@ -1543,15 +1517,8 @@ def game_loop(args):
         display.fill((0,0,0))
         pygame.display.flip()
 
-        
-        sock=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(("10.8.1.83", 2337))
-        sock.listen()
-        conn, addr= sock.accept()
-
-
         hud = HUD(args.width, args.height)
-        world = World(sim_world, hud, args,conn)
+        world = World(sim_world, hud, args)
         controller = KeyboardControl(world, args.autopilot)
 
         if args.sync:
