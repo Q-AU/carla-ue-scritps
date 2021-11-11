@@ -214,9 +214,11 @@ class FrameSegment(object):
         """  Compress image and Break down
         into data segments"""
   
-        compress_img = cv2.imencode(".jpg", img)[1]
-        dat = compress_img.tostring()
+        #compress_img = cv2.imencode(".jpg", img)[1]
+        #dat = compress_img.tostring()
+        dat=img
         size = len(dat)
+        print(size)
         num_of_segments = math.ceil(size/(self.MAX_IMAGE_DGRAM))
         array_pos_start = 0
     
@@ -441,7 +443,7 @@ class RGBObservers(object):
         cam_bp.set_attribute("image_size_y", str(1080))
         cam_bp.set_attribute("fov",str(110))
         # Set the time in seconds between sensor captures
-        cam_bp.set_attribute('sensor_tick', '2')
+        #cam_bp.set_attribute('sensor_tick', '1')
         cam = world.spawn_actor(cam_bp, transform, attach_to = vehicle, attachment_type = carla.AttachmentType.Rigid)
         cam.listen(sensorCallback)
         return cam
@@ -515,11 +517,11 @@ class RGBObservers(object):
         port=6000
         FS=FrameSegment(sock)
         try:
-            array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
-            array = np.reshape(array, (image.height, image.width, 4))
-            array = array[:, :, :3]
-            array = array[:, :, ::-1]
-            FS.udp_frame(array)    
+            #array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
+            #array = np.reshape(array, (image.height, image.width, 4))
+            #array = array[:, :, :3]
+            #array = array[:, :, ::-1]
+            FS.udp_frame(image.raw_data)  
         # start = 0
         # end = 1024
         # img_bytes = image.raw_data.tobytes()
@@ -1634,8 +1636,8 @@ def main():
     argparser.add_argument(
         '--res',
         metavar='WIDTHxHEIGHT',
-        default='1920x1080',
-        help='window resolution (default: 1280x720)')
+        default='1280x720',
+        help='window resolution (default: 640x360)')
     argparser.add_argument(
         '--filter',
         metavar='PATTERN',
