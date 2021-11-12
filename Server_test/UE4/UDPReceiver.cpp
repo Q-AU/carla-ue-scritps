@@ -155,8 +155,6 @@ void AUDPReceiver::Recv(const FArrayReaderPtr& ArrayReaderPtr, const FIPv4Endpoi
 		total_received = 0;
 		img_buff = new uint8[image_size];
 	}
-	
-	
 }
 
 void AUDPReceiver::StartUDPReceiver()
@@ -174,19 +172,19 @@ void AUDPReceiver::StartUDPReceiver()
 	FIPv4Endpoint AnyEndpoint(FIPv4Address::Any,port);
 
 	//BUFFER SIZE
-	//int32 BufferSize = 1024;
+	int32 BufferSize = FMath::Pow(2,16);
 
 	ListenSocket = FUdpSocketBuilder("MySocket")
 		.WithMulticastLoopback()
 		.WithMulticastTtl(2)
-		.WithBroadcast()
+		//.WithBroadcast()
 		.JoinedToGroup(Group)
 		.AsNonBlocking()
 		.AsReusable()
 		//.BoundToEndpoint(AnyEndpoint)
 		//.BoundToAddress(Addr)
 		.BoundToPort(port)
-		.WithReceiveBufferSize(pow(2, 16))
+		.WithReceiveBufferSize(BufferSize)
 		.Build();
 
 
