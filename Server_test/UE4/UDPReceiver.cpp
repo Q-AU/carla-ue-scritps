@@ -161,7 +161,7 @@ void AUDPReceiver::Recv(const FArrayReaderPtr& ArrayReaderPtr, const FIPv4Endpoi
 
 void AUDPReceiver::StartUDPReceiver()
 {
-
+	int32 port=6000;
 	FIPv4Address Addr;
 	FIPv4Address::Parse(TEXT("0.0.0.0"), Addr);
 
@@ -170,11 +170,11 @@ void AUDPReceiver::StartUDPReceiver()
 	FIPv4Address::Parse(TEXT("224.1.1.1"), Group);
 
 	//Create Socket
-	FIPv4Endpoint Endpoint(Addr, 6000);
-	FIPv4Endpoint AnyEndpoint(FIPv4Address::Any, 6000);
+	FIPv4Endpoint Endpoint(Addr, port);
+	FIPv4Endpoint AnyEndpoint(FIPv4Address::Any,port);
 
 	//BUFFER SIZE
-	int32 BufferSize =1024;
+	//int32 BufferSize = 1024;
 
 	ListenSocket = FUdpSocketBuilder("MySocket")
 		.WithMulticastLoopback()
@@ -183,19 +183,32 @@ void AUDPReceiver::StartUDPReceiver()
 		.JoinedToGroup(Group)
 		.AsNonBlocking()
 		.AsReusable()
-		.BoundToEndpoint(AnyEndpoint)
-		.BoundToAddress(Addr)
-		.BoundToPort(6000)
-		.WithReceiveBufferSize(pow(2,16))
+		//.BoundToEndpoint(AnyEndpoint)
+		//.BoundToAddress(Addr)
+		.BoundToPort(port)
+		.WithReceiveBufferSize(pow(2, 16))
 		.Build();
 
-	FTimespan ThreadWaitTime = FTimespan::FromMilliseconds(100);
-	UDPReceiver = new FUdpSocketReceiver(ListenSocket, ThreadWaitTime, TEXT("MyThread"));
 
-	UDPReceiver->OnDataReceived().BindUObject(this, &AUDPReceiver::Recv);
-	//OnReceiveSocketStartedListening.Broadcast();
+	if (ListenSocket != nullptr) 
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Blue, FString::Printf(TEXT("Success: %d"), port));
 
-	UDPReceiver->Start();
+		FTimespan ThreadWaitTime = FTimespan::FromMilliseconds(100);
+		UDPReceiver = new FUdpSocketReceiver(ListenSocket, ThreadWaitTime, TEXT("MyThread"));
+
+		UDPReceiver->OnDataReceived().BindUObject(this, &AUDPReceiver::Recv);
+		//OnReceiveSocketStartedListening.Broadcast();
+
+		UDPReceiver->Start();
+	}
+	else 
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, FString::Printf(TEXT("Faildet to create socket: %d"), port));
+
+	}
+
+
 }
 
 // Called every frame
