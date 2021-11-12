@@ -192,6 +192,8 @@ void AUDPReceiver::StartUDPReceiver()
 
 	if (ListenSocket != nullptr) 
 	{
+		UE_LOG(LogTemp, Warning, TEXT("Success creating socket!!"));
+
 		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Blue, FString::Printf(TEXT("Success: %d"), port));
 
 		FTimespan ThreadWaitTime = FTimespan::FromMilliseconds(100);
@@ -204,6 +206,8 @@ void AUDPReceiver::StartUDPReceiver()
 	}
 	else 
 	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to create socket!!"));
+
 		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, FString::Printf(TEXT("Faildet to create socket: %d"), port));
 
 	}
