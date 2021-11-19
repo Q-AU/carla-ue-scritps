@@ -26,6 +26,13 @@ public:
 
 	// Sets default values for this actor's properties
 	AUDPReceiver();
+	//Sender
+	TSharedPtr<FInternetAddr>	RemoteAddr;
+	FSocket* SenderSocket;
+	bool IsUDP;
+	TArray<int> SegmentsArrived;
+
+	//Receiver 
 	FSocket* ListenSocket;
 	FUdpSocketReceiver* UDPReceiver = nullptr;
 	UPROPERTY(BlueprintReadWrite, VisibleAnywhere)
@@ -37,14 +44,19 @@ protected:
 	virtual void BeginPlay() override;
 
 public:	
-	void Recv(const FArrayReaderPtr& ArrayReaderPtr, const FIPv4Endpoint& EndPt);
-
+	void OnDataReceivedDelagated(const FArrayReaderPtr& ArrayReaderPtr, const FIPv4Endpoint& EndPt);
+	void Send_ACK(int Segment,int bytesReceived, uint8* PaketReceived);
 	void StartUDPReceiver();
 	
+	bool StartUDPSender(const FString& YourChosenSocketName,const FString& TheIP,const int32 ThePort);
+
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	bool ImageReceived();
+	bool SegmentReceived(uint8 Segment);
+
+	void SendData(FArrayWriter Data2Send, int32 DataSize);
+
 
 };

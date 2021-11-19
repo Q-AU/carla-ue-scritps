@@ -17,24 +17,9 @@ int camTextureIndex = 0;
 uint8* img_buff = new uint8[image_size];
 
 
-constexpr uint8 segmentation_color_map[13][4] = {
-	{0,0,0,0},
-	{255,0,0,0},
-	{0,255,0,0},
-	{255,255,0,0},
-	{0,0,255,0},
-	{255,0,255,0},
-	{0,255,255,0},
-	{255,255,255,0},
-	{80,80,80,0},
-	{80,30,240,0},
-	{240,125,45,0},
-	{55,193,28,0},
-	{255,125,255,0}
-};
 
- 
 int total_received = 0;
+const int EXPECTED_PACKETS = 127;
 
 // Sets default values
 AUDPReceiver::AUDPReceiver()
@@ -48,8 +33,8 @@ AUDPReceiver::AUDPReceiver()
 void AUDPReceiver::BeginPlay()
 {
 	Super::BeginPlay();
-
 	StartUDPReceiver();
+	StartUDPSender("UDPSender", "127.0.0.1",2338);
 
 	FName texName(FString::Printf(TEXT("cam_texture_%d"), camTextureIndex));
 	camTextureIndex++;
@@ -109,43 +94,50 @@ void AUDPReceiver::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		ListenSocket->Close();
 		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ListenSocket);
 	}
+	if (SenderSocket)
+	{
+		SenderSocket->Close();
+		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(SenderSocket);
+	}
 }
 
-bool AUDPReceiver::ImageReceived() 
+bool AUDPReceiver::SegmentReceived(uint8 Segment) 
 {
-
-
 	return true;
 }
 
+void AUDPReceiver::SendData(FArrayWriter Data2Send, int32 DataSize)
+{
+	SenderSocket->SendTo(Data2Send.GetData(), Data2Send.Num(), DataSize, *RemoteAddr);
+	if (DataSize <= 0)
+	{
+		const FString Str = "Socket is valid but the receiver received 0 bytes, make sure it is listening properly!";
+		UE_LOG(LogTemp, Error, TEXT("%s"), *Str);
+	}
+}
 
-void AUDPReceiver::Recv(const FArrayReaderPtr& ArrayReaderPtr, const FIPv4Endpoint& EndPt)
+void AUDPReceiver::OnDataReceivedDelagated(const FArrayReaderPtr& ArrayReaderPtr, const FIPv4Endpoint& EndPt)
 {
 	//char* Data = (char*)ArrayReaderPtr->GetData();
 	//FString Msg = FString(ANSI_TO_TCHAR(Data));
 	uint8* Data = ArrayReaderPtr->GetData();
+
 	GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, FString::Printf(TEXT("Data received: %d"), Data[0]));
-	/*FMemory::Memcpy(img_buff, &Data[1], 480 * 270 * 4);
-
-
-	uint32* dest = (uint32*)camTexture->PlatformData->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
-	FMemory::Memcpy(dest, img_buff, image_height * image_width * 4);
-
-	camTexture->PlatformData->Mips[0].BulkData.Unlock();
-	camTexture->UpdateResource();
-	img_buff = new uint8[image_height * image_width * 4];*/
-
+	
 	int bytesReceived = ArrayReaderPtr->Num();
-	total_received += (bytesReceived - 1);
 	int img_received_count = bytesReceived - 1;
-	if (Data[0] > 1) 
-	{
-		FMemory::Memcpy(img_buff + total_received - img_received_count, &Data[1], img_received_count);
-	}
-	else
-	{
+	//Send_ACK((int) Data[0], bytesReceived, &Data[1]);
 
-	 FMemory::Memcpy(img_buff + total_received - img_received_count, &Data[1], img_received_count);
+	int FLAG = 0;
+	int Segment = Data[0];
+
+	UE_LOG(LogTemp, Warning, TEXT("Arrived %d"), Segment);
+	int32 BytesSent = 0;
+	FArrayWriter Writer;
+	if (SegmentsArrived.Num() == EXPECTED_PACKETS-1)
+	{
+		total_received = 0;
+		SegmentsArrived.Empty();
 
 		uint32* dest = (uint32*)camTexture->PlatformData->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
 		FMemory::Memcpy(dest, img_buff, image_size);
@@ -154,8 +146,39 @@ void AUDPReceiver::Recv(const FArrayReaderPtr& ArrayReaderPtr, const FIPv4Endpoi
 		camTexture->UpdateResource();
 		total_received = 0;
 		img_buff = new uint8[image_size];
+
 	}
+
+	if (SegmentsArrived.Contains(Segment))
+	{
+		UE_LOG(LogTemp, Error, TEXT("SEGMENT ALREADY THERE %d"), Segment);
+
+		Writer << FLAG;
+		SendData(Writer, BytesSent);
+	}
+	else
+	{
+		total_received += (bytesReceived - 1);
+
+		FLAG = 1;
+		SegmentsArrived.Add(Segment);
+		UE_LOG(LogTemp, Warning, TEXT("SEGMENT ADDED %d"), Segment);
+
+		Writer << Segment;
+		SendData(Writer, BytesSent);
+		//COPY IN MEMORY
+		FMemory::Memcpy(img_buff + total_received - img_received_count, &Data[1], img_received_count);
+
+	}
+
 }
+
+void AUDPReceiver::Send_ACK(int Segment, int bytesReceived, uint8* PaketReceived) {
+	
+
+}
+
+
 
 void AUDPReceiver::StartUDPReceiver()
 {
@@ -174,7 +197,7 @@ void AUDPReceiver::StartUDPReceiver()
 	//BUFFER SIZE
 	int32 BufferSize = FMath::Pow(2,16);
 
-	ListenSocket = FUdpSocketBuilder("MySocket")
+	ListenSocket = FUdpSocketBuilder("UDPSender")
 		.WithMulticastLoopback()
 		.WithMulticastTtl(2)
 		//.WithBroadcast()
@@ -197,7 +220,7 @@ void AUDPReceiver::StartUDPReceiver()
 		FTimespan ThreadWaitTime = FTimespan::FromMilliseconds(100);
 		UDPReceiver = new FUdpSocketReceiver(ListenSocket, ThreadWaitTime, TEXT("MyThread"));
 
-		UDPReceiver->OnDataReceived().BindUObject(this, &AUDPReceiver::Recv);
+		UDPReceiver->OnDataReceived().BindUObject(this, &AUDPReceiver::OnDataReceivedDelagated);
 		//OnReceiveSocketStartedListening.Broadcast();
 
 		UDPReceiver->Start();
@@ -213,9 +236,95 @@ void AUDPReceiver::StartUDPReceiver()
 
 }
 
+bool AUDPReceiver::StartUDPSender(const FString& YourChosenSocketName, const FString& TheIP, const int32 ThePort)
+{
+//Create Remote Address.
+	RemoteAddr = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->CreateInternetAddr();
+
+	bool bIsValid;
+	RemoteAddr->SetIp(*TheIP, bIsValid);
+	RemoteAddr->SetPort(ThePort);
+
+	if (!bIsValid)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, FString::Printf(TEXT("NON VALID ADDR: %s:%d"), *TheIP,ThePort));
+		return false;
+	}
+
+	SenderSocket = FUdpSocketBuilder(*YourChosenSocketName)
+		.AsReusable()
+		.WithBroadcast();
+
+	//Set Send Buffer Size
+	int32 SendSize = 1024;
+	SenderSocket->SetSendBufferSize(SendSize, SendSize);
+	SenderSocket->SetReceiveBufferSize(SendSize, SendSize);
+
+	UE_LOG(LogTemp, Log, TEXT("\n\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"));
+	UE_LOG(LogTemp, Log, TEXT("Rama ****UDP**** Sender Initialized Successfully!!!"));
+	UE_LOG(LogTemp, Log, TEXT("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n\n"));
+
+	return true;
+}
+
 // Called every frame
 void AUDPReceiver::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 }
 
+
+
+
+/*if (SegmentsArrived.Num() > 0)
+{
+	for (int32 i=0; i < SegmentsArrived.Num(); i++)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Ele %d"), SegmentsArrived[i])
+	}
+}
+else
+{
+	UE_LOG(LogTemp,Error,TEXT("Empty array %d"), SegmentsArrived.Num())
+}*/
+
+//int bytesReceived = ArrayReaderPtr->Num();
+//total_received += (bytesReceived - 1);
+//int img_received_count = bytesReceived - 1;
+//
+//++total_received;
+
+//if (total_received < EXPECTED_PACKETS) 
+//{
+//	FMemory::Memcpy(img_buff+(total_received-1)* img_received_count,&Data[1],img_received_count);
+//}
+//else
+//{
+//	FMemory::Memcpy(img_buff + (total_received - 1) * img_received_count, &Data[1], img_received_count);
+
+//	uint32* dest = (uint32*)camTexture->PlatformData->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+//	FMemory::Memcpy(dest, img_buff, image_size);
+
+//	camTexture->PlatformData->Mips[0].BulkData.Unlock();
+//	camTexture->UpdateResource();
+//	total_received = 0;
+//	//img_buff = new uint8[image_size];
+//}
+//
+/*if (Data[0] > 1)
+{
+	FMemory::Memcpy(img_buff + total_received - img_received_count, &Data[1], img_received_count);
+}
+else
+{
+
+ FMemory::Memcpy(img_buff + total_received - img_received_count, &Data[1], img_received_count);
+
+	uint32* dest = (uint32*)camTexture->PlatformData->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+	FMemory::Memcpy(dest, img_buff, image_size);
+
+	camTexture->PlatformData->Mips[0].BulkData.Unlock();
+	camTexture->UpdateResource();
+	total_received = 0;
+	img_buff = new uint8[image_size];
+}*/
