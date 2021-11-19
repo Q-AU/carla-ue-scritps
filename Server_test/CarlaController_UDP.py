@@ -198,46 +198,12 @@ def get_actor_blueprints(world, filter, generation):
     except:
         print("   Warning! Actor Generation is not valid. No actor will be spawned.")
         return []
-
-# ==============================================================================
-# --Fragment Video ---------------------------------------------------------
-# ==============================================================================
-class FrameSegment(object):
-    def __init__(self, sock):
-        self.s=sock
-        self.port=6000
-        self.addr="224.1.1.1"
-        self.MAX_DGRAM=2**16
-        self.MAX_IMAGE_DGRAM=self.MAX_DGRAM-64
-       
-    def udp_frame(self, img):
-        """  Compress image and Break down
-        into data segments"""
-  
-        #compress_img = cv2.imencode(".jpg", img)[1]
-        #dat = compress_img.tostring()
-        dat=img
-        size = len(dat)
-        print(size)
-        num_of_segments = math.ceil(size/(self.MAX_IMAGE_DGRAM))
-        array_pos_start = 0
-    
-        while num_of_segments:
-            array_pos_end = min(size, array_pos_start + self.MAX_IMAGE_DGRAM)
-            self.s.sendto(
-                    struct.pack("B", num_of_segments) +
-                    dat[array_pos_start:array_pos_end], 
-                    (self.addr, self.port)
-                    )
-            array_pos_start = array_pos_end
-            num_of_segments -= 1
-
-
 # ==============================================================================
 # -- OtherSensorDataSender------------------------------------------------------
 # ==============================================================================
 
 class OtherSensorDataSender(object):
+  
     def __init__(self, parent_actor):
         self.SENSOR_SEND_IP = "127.0.0.1"
         self.OTHER_SENSOR_DATA_SEND_START_PORT = 4337
@@ -293,12 +259,146 @@ class OtherSensorDataSender(object):
 
         return False
 
+
+# ==============================================================================
+# --Fragment Video ---------------------------------------------------------
+# ==============================================================================
+class FrameSegment(object):
+    def __init__(self, sock,SERVER):
+        self.s=sock
+        self.port=6000
+        self.addr="224.1.1.1"
+        self.MAX_DGRAM=2**16
+        self.MAX_IMAGE_DGRAM=self.MAX_DGRAM-64
+        self.UDPSERVER=SERVER
+
+    def udp_frame(self, img):
+        """  Compress image and Break down
+        into data segments"""
+  
+        #compress_img = cv2.imencode(".jpg", img)[1]
+        #dat = compress_img.tostring()
+        dat=img
+        size = len(dat)
+    
+        num_of_segments = math.ceil(size/(self.MAX_IMAGE_DGRAM))
+        array_pos_start = 0
+
+        
+
+        while num_of_segments:
+            array_pos_end = min(size, array_pos_start + self.MAX_IMAGE_DGRAM)
+            num_of_clients=1
+            while num_of_clients:
+                self.s.sendto(
+                    struct.pack("B", num_of_segments) +
+                    dat[array_pos_start:array_pos_end], 
+                    (self.addr, self.port)
+                    )
+                data, address = self.UDPSERVER.recvfrom(1024)
+                print("Delivered: ", struct.unpack("B",data[0:1])[0])    
+
+                if struct.unpack("B",data[0:1])[0]  !=0:
+                    num_of_clients-=1
+            array_pos_start = array_pos_end
+            num_of_segments -= 1
+
+
+# ==============================================================================
+# -- RGB Obervers     ----------------------------------------------------------
+# ==============================================================================
+
+"""RGB Cameras set up must be nodified here"""
+class RGBObservers(object):
+    def __init__(self, parent_actor, port, SERVER):
+        self.SERVER=SERVER
+        self._port=port
+        self.SENSOR_SEND_IP = "127.0.0.1"
+        #self.SENSOR_SEND_IP = "192.168.0.100"
+        # self.SENSOR_SEND_IP = "169.254.39.15"
+        #self.SENSOR_SEND_IP = "169.254.69.126"
+        #self.SENSOR_SEND_IP2 = "169.254.88.129"
+        self.RGB_SEND_START_PORT = 2337
+        self.Thread=None
+        self.socketsByPort = {}
+        # self.socketsByPort2 = {}
+
+        self.socketType = socket.AF_INET
+        self.protocolType = socket.SOCK_STREAM
+        self.sensor=None
+        self._parent = parent_actor
+        self._world = self._parent.get_world()
+        self.attach_rgb_camera=partial(self.attach_sensor, sensorType='sensor.camera.rgb')
+
+  
+    def attach_sensor(self,world, vehicle, transform, sensorCallback, sensorType):
+        cam_bp = world.get_blueprint_library().find(sensorType)
+        cam_bp.set_attribute("image_size_x", str(1920))
+        cam_bp.set_attribute("image_size_y", str(1080))
+        cam_bp.set_attribute("fov",str(110))
+        # Set the time in seconds between sensor captures
+        #cam_bp.set_attribute('sensor_tick', '5')
+        cam = world.spawn_actor(cam_bp, transform, attach_to = vehicle, attachment_type = carla.AttachmentType.Rigid)
+        cam.listen(sensorCallback)
+        return cam
+
+
+    def set_sensors(self):
+        self.sensor=[]
+        cam_location=carla.Location(-0.15,-0.4,1.2)
+        cam1= self.attach_rgb_camera(self._world,self._parent, 
+        carla.Transform(cam_location,carla.Rotation(0,0,0)),
+        lambda image: partial(self.rgb_callback,port=self._port)(image))
+        self.sensor.append(cam1)   
+        
+    def rgb_callback(self,image, port):
+       
+        ttl=2
+        try:
+            sock= socket.socket(socket.AF_INET, 
+                socket.SOCK_DGRAM,
+                socket.IPPROTO_UDP)
+            sock.setsockopt(socket.IPPROTO_IP,
+                socket.IP_MULTICAST_TTL,ttl)
+            self.send_image(image,sock)    
+        except ConnectionAbortedError:
+            sock.close()
+            
+        
+    def send_image(self,image, sock ):
+        group="224.1.1.1"
+        port=6000
+        FS=FrameSegment(sock, self.SERVER)
+        try:
+            #array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
+            #array = np.reshape(array, (image.height, image.width, 4))
+            #array = array[:, :, :3]
+            #array = array[:, :, ::-1]
+            FS.udp_frame(image.raw_data)  
+        # start = 0
+        # end = 1024
+        # img_bytes = image.raw_data.tobytes()
+        # try:
+        #     while end < len(img_bytes):
+        #         sock.sendto(img_bytes[start:end],(group,port))
+        #         start = end + 1
+        #         end += 1024
+        #     sock.sendto("END".encode(),(group,port))    
+            return True
+        except ConnectionResetError:
+            #print("connection reset error")
+            sock.close()
+            return False
+        return False
+
+
+
 # ==============================================================================
 # -- Car ---------------------------------------------------------------------
 # ==============================================================================
 
 class Car(object):
-    def __init__(self,world,carType,carGen,carName,hud,gamma, port):
+    def __init__(self,world,carType,carGen,carName,hud,gamma, port,UDPServer):
         self.world=world
         try:
             self.map = self.world.get_map()
@@ -307,7 +407,7 @@ class Car(object):
             print('  The server could not send the OpenDRIVE (.xodr) file:')
             print('  Make sure it exists, has the same name of your town, and is correct.')
             sys.exit(1)
-        self.Thread=None    
+        self.Server=UDPServer    
         self.hud = hud 
         self._port=port 
         self._gamma=gamma
@@ -364,7 +464,7 @@ class Car(object):
         
             self.modify_vehicle_physics(self.player)
          ##Set up the rbg cameras that are streamed to UE4
-        self.rgb_observers=RGBObservers(self.player, self._port)
+        self.rgb_observers=RGBObservers(self.player, self._port,self.Server)
         self.rgb_observers.set_sensors()
         
         # self.rgb_observers.set_sensors()
@@ -410,136 +510,6 @@ class Car(object):
             self.player.destroy()
 
 
-
-# ==============================================================================
-# -- RGB Obervers     ----------------------------------------------------------
-# ==============================================================================
-
-"""RGB Cameras set up must be nodified here"""
-class RGBObservers(object):
-    def __init__(self, parent_actor, port):
-        self._port=port
-        self.SENSOR_SEND_IP = "127.0.0.1"
-        #self.SENSOR_SEND_IP = "192.168.0.100"
-        # self.SENSOR_SEND_IP = "169.254.39.15"
-        #self.SENSOR_SEND_IP = "169.254.69.126"
-        #self.SENSOR_SEND_IP2 = "169.254.88.129"
-        self.RGB_SEND_START_PORT = 2337
-        self.Thread=None
-        self.socketsByPort = {}
-        # self.socketsByPort2 = {}
-
-        self.socketType = socket.AF_INET
-        self.protocolType = socket.SOCK_STREAM
-        self.sensor=None
-        self._parent = parent_actor
-        self._world = self._parent.get_world()
-        self.attach_rgb_camera=partial(self.attach_sensor, sensorType='sensor.camera.rgb')
-
-  
-    def attach_sensor(self,world, vehicle, transform, sensorCallback, sensorType):
-        cam_bp = world.get_blueprint_library().find(sensorType)
-        cam_bp.set_attribute("image_size_x", str(1920))
-        cam_bp.set_attribute("image_size_y", str(1080))
-        cam_bp.set_attribute("fov",str(110))
-        # Set the time in seconds between sensor captures
-        #cam_bp.set_attribute('sensor_tick', '1')
-        cam = world.spawn_actor(cam_bp, transform, attach_to = vehicle, attachment_type = carla.AttachmentType.Rigid)
-        cam.listen(sensorCallback)
-        return cam
-        
-    def set_sensors(self):
-        self.sensor=[]
-        cam_location=carla.Location(-0.15,-0.4,1.2)
-        cam1= self.attach_rgb_camera(self._world,self._parent, 
-        carla.Transform(cam_location,carla.Rotation(0,0,0)),
-        lambda image: partial(self.rgb_callback,port=self._port)(image))
-        self.sensor.append(cam1)   
-        
-    def rgb_callback(self,image, port):
-       
-        ttl=2
-        try:
-            sock= socket.socket(socket.AF_INET, 
-                socket.SOCK_DGRAM,
-                socket.IPPROTO_UDP)
-            sock.setsockopt(socket.IPPROTO_IP,
-                socket.IP_MULTICAST_TTL,ttl)
-            self.send_image(image,sock)    
-        except ConnectionAbortedError:
-            sock.close()
-        
-
-        # Set up the other data sensors for speed, battery etc
-        #self.other_sensor_data_sender = OtherSensorDataSender(self._parent)
-        #self.other_sensor_data_sender.set_other_sensor_data()
-        # if port not in self.socketsByPort:
-        #     try:
-        #         sock = socket.socket(self.socketType, self.protocolType)
-        #         # sock2 = socket.socket(self.socketType, self.protocolType)
-
-        #         self.socketsByPort[port] = sock
-        #         # self.socketsByPort2[port] = sock2
-
-        #         sock.connect((self.SENSOR_SEND_IP, port))
-        #         # sock2.connect((self.SENSOR_SEND_IP2, port))
-
-        #     except ConnectionRefusedError:
-        #         #print("connection refused error")
-        #         del self.socketsByPort[port]
-        #         # del self.socketsByPort2[port]
-
-        #         return
-            
-        # sock = self.socketsByPort[port]
-        # # sock2 = self.socketsByPort2[port]
-
-        # try:
-        #     still_connected = self.send_image(image, sock)
-        #     # still_connected2 = self.send_image(image, sock2)
-
-        # # image.save_to_disk("images/", carla.ColorConverter.CityScapesPalette)
-        #     if not still_connected :
-        #         del self.socketsByPort[port]
-        #         # del self.socketsByPort2[port]
-
-        #         sock.close()
-        #         # sock2.close()
-        # except ConnectionAbortedError:
-        #     del self.socketsByPort[port]
-        #     # del self.socketsByPort2[port]
-        #     sock.close()
-        #     # sock2.close()
-        
-        
-    def send_image(self,image, sock ):
-        group="224.1.1.1"
-        port=6000
-        FS=FrameSegment(sock)
-        try:
-            #array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
-            #array = np.reshape(array, (image.height, image.width, 4))
-            #array = array[:, :, :3]
-            #array = array[:, :, ::-1]
-            FS.udp_frame(image.raw_data)  
-        # start = 0
-        # end = 1024
-        # img_bytes = image.raw_data.tobytes()
-        # try:
-        #     while end < len(img_bytes):
-        #         sock.sendto(img_bytes[start:end],(group,port))
-        #         start = end + 1
-        #         end += 1024
-        #     sock.sendto("END".encode(),(group,port))    
-            return True
-        except ConnectionResetError:
-            #print("connection reset error")
-            sock.close()
-            return False
-        return False
-
-
-
 # ==============================================================================
 # -- World ---------------------------------------------------------------------
 # ==============================================================================
@@ -574,6 +544,11 @@ class World(object):
         self._actor_filter = args.filter #Needs be handle within Car class
         self._actor_generation = args.generation #Needs be handle within Car class
         self._gamma = args.gamma 
+        
+        self.UDPServer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.server_address = ("127.0.0.1", 2338)
+        self.UDPServer.bind(self.server_address)
+    
         self.restart()
         self.world.on_tick(hud.on_world_tick)
         self.recording_enabled = False
@@ -604,7 +579,7 @@ class World(object):
         #def __init__(self,world,carType,carGen,carName):
         # Keep same camera config if the camera manager exists.
         
-        car1=Car(self.world,self._actor_filter,self._actor_generation,"hero1",self.hud,self._gamma,3333)
+        car1=Car(self.world,self._actor_filter,self._actor_generation,"hero1",self.hud,self._gamma,3333,self.UDPServer)
         self.car_list.append(car1)
         # car2=Car(self.world,self._actor_filter,self._actor_generation,"hero2",self.hud,self._gamma,2338)
         # self.car_list.append(car2)
