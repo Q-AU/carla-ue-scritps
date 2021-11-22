@@ -93,7 +93,7 @@ import random
 import re
 import weakref
 ##NETWORK
-
+import cv2
 import random
 import sys
 from functools import partial
@@ -235,7 +235,6 @@ class OtherSensorDataSender(object):
 
         try:
             still_connected = self.socket_send_other_sensor_data(other_sensor_data, sock)
-        # image.save_to_disk("images/", carla.ColorConverter.CityScapesPalette)
             if not still_connected:
                 del self.socketsByPort[port]
                 sock.close()
@@ -403,7 +402,7 @@ class RGBObservers(object):
         cam_bp.set_attribute("image_size_y", str(1080))
         cam_bp.set_attribute("fov",str(110))
         # Set the time in seconds between sensor captures
-        cam_bp.set_attribute('sensor_tick', '2')
+        #cam_bp.set_attribute('sensor_tick', '1')
         cam = world.spawn_actor(cam_bp, transform, attach_to = vehicle, attachment_type = carla.AttachmentType.Rigid)
         cam.listen(sensorCallback)
         return cam
@@ -418,8 +417,8 @@ class RGBObservers(object):
         
     def rgb_callback(self,image, port):
         # Set up the other data sensors for speed, battery etc
-        self.other_sensor_data_sender = OtherSensorDataSender(self._parent)
-        self.other_sensor_data_sender.set_other_sensor_data()
+        #self.other_sensor_data_sender = OtherSensorDataSender(self._parent)
+        #self.other_sensor_data_sender.set_other_sensor_data()
         if port not in self.socketsByPort:
             try:
                 sock = socket.socket(self.socketType, self.protocolType)
@@ -445,7 +444,6 @@ class RGBObservers(object):
             still_connected = self.send_image(image, sock)
             # still_connected2 = self.send_image(image, sock2)
 
-        # image.save_to_disk("images/", carla.ColorConverter.CityScapesPalette)
             if not still_connected :
                 del self.socketsByPort[port]
                 # del self.socketsByPort2[port]
@@ -462,12 +460,25 @@ class RGBObservers(object):
     def send_image(self,image, sock):
         try:
             #print(len(image.raw_data))
-            sock.sendall(image.raw_data)
+            #image.save_to_disk("C:\\Users\\ccmij\\Documents\\MRLAB\\carla-ue-scritps\\", carla.ColorConverter.CityScapesPalette)
+            #image.save_to_disk("C:/Users/ccmij/Documents/MRLAB/carla-ue-scritps/", carla.ColorConverter.CityScapesPalette)
+            
+            array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
+            array = np.reshape(array, (image.height, image.width, 4))
+            array = array[:, :, :3]
+            #array = array[:, :, ::-1]
+            
+            compress_img = cv2.imencode(".jpg", array)[1]
+            dat = compress_img.tostring()
+            
+            #sock.sendall(image.raw_data)
+            sock.sendall(dat)
             return True
         except ConnectionResetError:
             #print("connection reset error")
             return False
 
+        
         
         return False
 
@@ -537,10 +548,10 @@ class World(object):
         #def __init__(self,world,carType,carGen,carName):
         # Keep same camera config if the camera manager exists.
         
-        car1=Car(self.world,self._actor_filter,self._actor_generation,"hero1",self.hud,self._gamma,3333)
+        car1=Car(self.world,self._actor_filter,self._actor_generation,"hero1",self.hud,self._gamma,2337)
         self.car_list.append(car1)
-        car2=Car(self.world,self._actor_filter,self._actor_generation,"hero2",self.hud,self._gamma,2338)
-        self.car_list.append(car2)
+        #car2=Car(self.world,self._actor_filter,self._actor_generation,"hero2",self.hud,self._gamma,2338)
+        #self.car_list.append(car2)
         # car3= Car(self.world,self._actor_filter,self._actor_generation,"hero3",self.hud,self._gamma,2339)
         # self.car_list.append(car3)
 
